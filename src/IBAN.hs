@@ -4,6 +4,8 @@
 --
 -- http://ics.uu.nl/docs/vakken/b3cc/assessment.html
 --
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Use if" #-}
 module IBAN (
 
   Mode(..), Config(..),
@@ -34,7 +36,11 @@ import qualified Data.ByteString.Char8                    as B8
 mtest :: Int -> Int -> Bool
 mtest m number =
   -- Implement the m-test here!
-  undefined
+  sum (splitNumbers number 1) `mod` m == 0
+  where
+    splitNumbers :: Int -> Int -> [Int]
+    splitNumbers 0 _ = []
+    splitNumbers number count = (number `mod` 10) * count : splitNumbers (number `div` 10) (count + 1)
 
 
 -- -----------------------------------------------------------------------------
@@ -44,8 +50,23 @@ mtest m number =
 count :: Config -> IO Int
 count config = do
   -- Implement count mode here!
-  undefined
+  return (countRange (cfgModulus config) (cfgLower config) (cfgUpper config))
 
+countRange :: Int -> Int -> Int -> Int
+countRange m lower upper  | lower == upper  = 0
+                          | otherwise       = case mtest m lower of
+                            True  -> 1 + countRange m (lower + 1) upper
+                            False -> countRange m (lower + 1) upper
+
+divideRange :: Int -> Int -> Int -> [(Int, Int)]
+divideRange t lower upper | lower == upper  = []
+                          | otherwise       = case range `mod` t == 0 of
+                            True  -> (lower, newLowerDivisible) : divideRange (t-1) newLowerDivisible upper
+                            False -> (lower, newLowerNotDivisible) : divideRange (t-1) newLowerNotDivisible upper
+  where
+    range = upper - lower
+    newLowerDivisible = lower + (range `div` t)
+    newLowerNotDivisible = lower + (range `div` t) + 1
 
 -- -----------------------------------------------------------------------------
 -- 2. List mode (3pt)
