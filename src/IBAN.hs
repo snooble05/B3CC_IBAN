@@ -15,7 +15,7 @@ module IBAN (
 
 import Control.Concurrent
 import Crypto.Hash.SHA1
-import Data.Atomics                                       ( readForCAS, casIORef, peekTicket )
+import Data.Atomics                                       ( readForCAS, casIORef, peekTicket, Ticket )
 import Data.IORef
 import Data.List                                          ( elemIndex )
 import Data.Word
@@ -36,11 +36,11 @@ import qualified Data.ByteString.Char8                    as B8
 mtest :: Int -> Int -> Bool
 mtest m number =
   -- Implement the m-test here!
-  sum (splitNumbers number 1) `mod` m == 0
+  calculateNumber number 1 `mod` m == 0
   where
-    splitNumbers :: Int -> Int -> [Int]
-    splitNumbers 0 _ = []
-    splitNumbers number count = (number `mod` 10) * count : splitNumbers (number `div` 10) (count + 1)
+    calculateNumber :: Int -> Int -> Int
+    calculateNumber 0 _ = 0
+    calculateNumber number count = (number `rem` 10) * count + calculateNumber (number `quot` 10) (count + 1)
 
 
 -- -----------------------------------------------------------------------------
@@ -50,8 +50,31 @@ mtest m number =
 count :: Config -> IO Int
 count config = do
   -- Implement count mode here!
-  return (countRange (cfgModulus config) (cfgLower config) (cfgUpper config))
+  sharedCount <- newIORef 0
+  forkThreads (cfgThreads config) (countThread config sharedCount)
+  readIORef sharedCount
 
+--Managing threads
+countThread :: Config -> IORef Int -> Int -> IO ()
+countThread config sharedCount threadID = do
+  let ranges = divideRange (cfgThreads config) (cfgLower config) (cfgUpper config)
+  let (lower, upper) = ranges !! threadID
+  if threadID > length ranges - 1
+    then return ()
+  else do
+    let new = countRange (cfgModulus config) lower upper
+    old <- readForCAS sharedCount
+    evaluate new
+    writeToRef sharedCount old new
+
+writeToRef :: IORef Int -> Ticket Int -> Int -> IO ()
+writeToRef sharedCount old new = do
+  (switched, newTicket) <- casIORef sharedCount old (peekTicket old + new)
+  case switched of
+    False -> writeToRef sharedCount newTicket new
+    True  -> return ()
+
+--Computing the number of valid accounts
 countRange :: Int -> Int -> Int -> Int
 countRange m lower upper  | lower == upper  = 0
                           | otherwise       = case mtest m lower of
@@ -76,8 +99,32 @@ list :: Handle -> Config -> IO ()
 list handle config = do
   -- Implement list mode here!
   -- Remember to use "hPutStrLn handle" to write your output.
-  undefined
+  sharedSequence <- newMVar 1
+  forkThreads (cfgThreads config) (listThread config handle sharedSequence)
 
+listThread :: Config -> Handle -> MVar Int -> Int -> IO ()
+listThread config handle sharedSequence threadID = do
+  let ranges = divideRange (cfgThreads config) (cfgLower config) (cfgUpper config)
+  let (lower, upper) = ranges !! threadID
+  if threadID > length ranges - 1
+    then return ()
+  else do
+    listRange handle sharedSequence (cfgModulus config) lower upper
+
+listRange :: Handle -> MVar Int -> Int -> Int -> Int -> IO ()
+listRange handle sharedSequence m lower upper | lower == upper  = return ()
+                                              | otherwise       = if mtest m lower
+                                                  then do 
+                                                    outputAccount handle sharedSequence lower
+                                                    listRange handle sharedSequence m (lower + 1) upper
+                                                else 
+                                                  listRange handle sharedSequence m (lower + 1) upper
+
+outputAccount :: Handle -> MVar Int -> Int -> IO ()
+outputAccount handle sharedSequence account = do
+  seq' <- takeMVar sharedSequence
+  hPutStrLn handle (show seq' ++ " " ++ show account)
+  putMVar sharedSequence (seq' + 1)
 
 -- -----------------------------------------------------------------------------
 -- 3. Search mode (4pt)
