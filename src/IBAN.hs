@@ -130,6 +130,32 @@ outputAccount handle sharedSequence account = do
 -- 3. Search mode (4pt)
 -- -----------------------------------------------------------------------------
 
+data Queue a = Queue (MVar (List a)) (MVar (List a))
+type List a = MVar (Item a)
+data Item a = Item a (List a)
+
+newQueue :: IO (Queue a)
+newQueue = do
+  hole <- newEmptyMVar
+  readLock <- newMVar hole
+  writeLock <- newMVar hole
+  return $ Queue readLock writeLock
+
+enqueue :: Queue a -> a -> IO ()
+enqueue (Queue _ writeLock) val = do
+  newHole <- newEmptyMVar
+  oldHole <- takeMVar writeLock
+  let item = Item val newHole
+  putMVar oldHole item
+  putMVar writeLock newHole
+
+dequeue :: Queue a -> IO a
+dequeue (Queue readLock _) = do
+  readEnd <- takeMVar readLock
+  (Item value rest) <- takeMVar readEnd
+  putMVar readLock rest
+  return value
+
 search :: Config -> ByteString -> IO (Maybe Int)
 search config query = do
   -- Implement search mode here!
