@@ -161,6 +161,17 @@ search config query = do
   -- Implement search mode here!
   undefined
 
+findAccount :: ByteString -> Int -> Int -> Int -> Maybe Int
+findAccount query m lower upper | lower == upper    = Nothing
+                                | otherwise         = 
+                                  if mtest m lower then
+                                    if checkHash query (show lower) then
+                                      Just lower
+                                    else
+                                      findAccount query m (lower + 1) upper
+                                  else
+                                    findAccount query m (lower + 1) upper
+
 
 -- -----------------------------------------------------------------------------
 -- Starting framework
