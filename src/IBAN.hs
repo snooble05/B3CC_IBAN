@@ -114,10 +114,10 @@ listThread config handle sharedSequence threadID = do
 listRange :: Handle -> MVar Int -> Int -> Int -> Int -> IO ()
 listRange handle sharedSequence m lower upper | lower == upper  = return ()
                                               | otherwise       = if mtest m lower
-                                                  then do 
+                                                  then do
                                                     outputAccount handle sharedSequence lower
                                                     listRange handle sharedSequence m (lower + 1) upper
-                                                else 
+                                                else
                                                   listRange handle sharedSequence m (lower + 1) upper
 
 outputAccount :: Handle -> MVar Int -> Int -> IO ()
@@ -156,21 +156,25 @@ dequeue (Queue readLock _) = do
   putMVar readLock rest
   return value
 
+maxWork :: Int
+maxWork = 5000
+
 search :: Config -> ByteString -> IO (Maybe Int)
 search config query = do
   -- Implement search mode here!
   undefined
+  --pendingWork <- newMVar 0
+  --forkThreads (cfgThreads config) (searchThread config pendingWork)
+
+searchThread :: Config -> MVar Int -> Int -> IO ()
+searchThread config pendingWork threadID = undefined
 
 findAccount :: ByteString -> Int -> Int -> Int -> Maybe Int
 findAccount query m lower upper | lower == upper    = Nothing
-                                | otherwise         = 
-                                  if mtest m lower then
-                                    if checkHash query (show lower) then
-                                      Just lower
-                                    else
-                                      findAccount query m (lower + 1) upper
-                                  else
-                                    findAccount query m (lower + 1) upper
+                                | otherwise         =
+                                  if mtest m lower && checkHash query (show lower) 
+                                    then Just lower 
+                                  else findAccount query m (lower + 1) upper
 
 
 -- -----------------------------------------------------------------------------
