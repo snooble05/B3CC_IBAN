@@ -19,7 +19,7 @@ import Data.Atomics                                       ( readForCAS, casIORef
 import Data.IORef
 import Data.List                                          ( elemIndex )
 import Data.Word
-import Data.Maybe                                         ( fromJust )
+import Data.Maybe                                         ( fromJust, isJust, isNothing )
 import System.Environment
 import System.IO
 import Data.ByteString.Char8                              ( ByteString )
@@ -149,25 +149,70 @@ enqueue (Queue _ writeLock) val = do
   putMVar oldHole item
   putMVar writeLock newHole
 
-dequeue :: Queue a -> IO a
+dequeue :: Queue a -> IO (Maybe a)
 dequeue (Queue readLock _) = do
   readEnd <- takeMVar readLock
-  (Item value rest) <- takeMVar readEnd
-  putMVar readLock rest
-  return value
+  item <- tryTakeMVar readEnd
+  case item of
+    Nothing -> do
+                putMVar readLock readEnd
+                return Nothing
+    Just (Item value rest) -> do
+                              putMVar readLock rest
+                              return (Just value)
+  
 
+--maxWork cannot be higher than 3000, otherwise it hangs on the benchmark
 maxWork :: Int
-maxWork = 5000
+maxWork = 3000
 
 search :: Config -> ByteString -> IO (Maybe Int)
 search config query = do
   -- Implement search mode here!
-  undefined
-  --pendingWork <- newMVar 0
-  --forkThreads (cfgThreads config) (searchThread config pendingWork)
+  queue <- newQueue
+  enqueue queue (cfgLower config, cfgUpper config)
+  pendingWork <- newMVar 1
+  maybeAccount <- newMVar Nothing
+  forkThreads (cfgThreads config) (searchThread config pendingWork maybeAccount query queue)
+  readMVar maybeAccount
 
-searchThread :: Config -> MVar Int -> Int -> IO ()
-searchThread config pendingWork threadID = undefined
+searchThread :: Config -> MVar Int -> MVar (Maybe Int) -> ByteString -> Queue (Int, Int) -> Int -> IO ()
+searchThread config pendingWork maybeAccount query queue threadID = do
+  pending <- readMVar pendingWork
+  if pending <= 0 then
+    do return ()
+  else 
+    do
+      dequeued <- dequeue queue
+      if isNothing dequeued then
+        searchThread config pendingWork maybeAccount query queue threadID
+      else do
+        let Just (lower, upper) = dequeued
+        let range = upper - lower
+        if range > maxWork then do
+          let (actualLower, actualUpper) = (lower, lower + maxWork)
+          let newRange = actualUpper - actualLower
+          enqueue queue (actualUpper, actualUpper + (newRange `div` 2))
+          enqueue queue (actualUpper + (newRange `div` 2), upper)
+          let account = findAccount query (cfgModulus config) actualLower actualUpper
+          newPending <- takeMVar pendingWork
+          putMVar pendingWork (newPending + 1)
+          if isJust account then do
+            _ <- takeMVar maybeAccount
+            putMVar maybeAccount account
+          else do
+            searchThread config pendingWork maybeAccount query queue threadID
+        else do
+          let account = findAccount query (cfgModulus config) lower upper
+          newPending <- takeMVar pendingWork
+          putMVar pendingWork (newPending - 1)
+          if isJust account then do
+            _ <- takeMVar maybeAccount
+            putMVar maybeAccount account
+            _ <- takeMVar pendingWork
+            putMVar pendingWork (-8)
+          else do
+            searchThread config pendingWork maybeAccount query queue threadID
 
 findAccount :: ByteString -> Int -> Int -> Int -> Maybe Int
 findAccount query m lower upper | lower == upper    = Nothing
